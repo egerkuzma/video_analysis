@@ -266,7 +266,7 @@ def connect_websocket():
     """
     global ws_app
     ws_url = (
-        "wss://rs2125.extcam.com/ws-fmp4/live?server=100-QBFfvYTO6A5EZ33a6T3esI&camera=0&access_token=public&streams=video&vcodec=h264&acodec=aac&acodec=mp3&acodec=pcma&acodec=pcmu&acodec=none&duration=0&q=2&d=rs2125.extcam.com&public=1&owner_id=100001687685&u=100001310398&ts=1739624899.387309&token=7d53f0f32ae34cdccffc45ad9b6ddcb0"
+        "wss://rs2125.extcam.com/"
     )
     
     ws_app = websocket.WebSocketApp(ws_url,
