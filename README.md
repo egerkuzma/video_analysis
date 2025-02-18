@@ -12,21 +12,21 @@
 - Поддержка русского языка в интерфейсе
 
 ## Требования
-
-pip install -r requirements.txt
-# requirements.txt
-
-# Основные зависимости
-websocket-client>=1.6.4
-opencv-python>=4.8.0
-numpy>=1.24.0
-deepface>=0.0.79
-
-# Дополнительные библиотеки
-Pillow>=10.0.0  # для работы с изображениями и шрифтами
-tensorflow>=2.13.0  # требуется для DeepFace - надо ставить через wsl если windows
-mtcnn>=0.1.1  # для детекции лиц
-retina-face>=0.0.13  # альтернативный детектор лиц
+в wsl
+python3 -m venv env
+source ~/tensorflow_project/env/bin/activate
+pip install --upgrade pip
+pip install tensorflow[and-cuda]
+pip install websocket-client
+pip install opencv-python
+pip install deepface
+pip install numpy
+pip install websocket-client
+pip install opencv-python
+pip install deepface
+pip install numpy
+sudo apt update
+pip install tf-keras
 
 
 Необходимые компоненты:
@@ -48,10 +48,6 @@ retina-face>=0.0.13  # альтернативный детектор лиц
    # Скачайте FFmpeg с официального сайта и добавьте в PATH
    ```
 
-2. Установите Python-зависимости:
-   ```bash
-   pip install websocket-client opencv-python deepface numpy
-   ```
 
 ## Использование
 
@@ -129,9 +125,12 @@ MIT
 - CUDA (опционально, для ускорения на GPU)
 
 ## Установка
-
-bash
-pip install torch opencv-python ultralytics websocket-client
+==================================
+https://pytorch.org/get-started/locally/#windows-prerequisites
+pip install websocket-client
+pip install opencv-python
+pip install ultralytics
+===================================
 
 
 Также необходимо установить FFmpeg:

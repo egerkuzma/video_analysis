@@ -29,29 +29,13 @@ ffmpeg_proc = None
 ws_app = None
 init_data_received = False
 model = None
-people_count = 0
-tracked_ids = {}  # Изменяем на словарь для хранения состояний
-ZONE_COOLDOWN = 300  # Количество кадров ожидания перед повторным подсчетом
+tracked_ids = {}  # Словарь для хранения информации о треках
 
-
-# Параметры видео
+# Удаляем неиспользуемые переменные и константы
 FRAME_WIDTH = 1280
 FRAME_HEIGHT = 720
 FRAME_SIZE = FRAME_WIDTH * FRAME_HEIGHT * 3
-# Добавляем коэффициент масштабирования для отображения
-SCALE_FACTOR = 1  # уменьшаем размер в 2 раза
-
-# Добавляем параметры зоны детекции после параметров видео
-DETECTION_ZONE = {
-    'x': 350,
-    'y': 50,
-    'width': 150,
-    'height': 150
-}
-
-# Добавляем новые константы после существующих
-MAX_RECONNECT_ATTEMPTS = 5
-RECONNECT_DELAY = 5  # секунды между попытками реконнекта
+SCALE_FACTOR = 1
 
 def init_model():
     """
@@ -60,7 +44,7 @@ def init_model():
     global model
     try:
         # Загружаем YOLOv8n (можно использовать 's', 'm', 'l', 'x' для других размеров)
-        model = YOLO('yolov8x.pt')
+        model = YOLO('yolo11x.pt')
         logging.info("YOLOv8 успешно инициализирован")
     except Exception as e:
         logging.error(f"Ошибка при инициализации YOLOv8: {e}")
@@ -72,97 +56,35 @@ def calculate_distance(pos1, pos2):
 
 def process_frame(frame):
     """
-    Обработка полученного кадра
+    Обработка полученного кадра с использованием встроенного трекера YOLO
     """
-    global model, ws_app, people_count, tracked_ids
+    global model, ws_app
     try:
-        # Создаем маску для верхней трети кадра
-        mask = np.zeros(frame.shape[:2], dtype=np.uint8)
-        mask[50:200, 300:500] = 255
+        # Используем встроенный трекер YOLO с оптимальными параметрами
+        results = model.track(frame, 
+                            persist=True,  # Включаем сохранение истории трекинга
+                            classes=[0],    # Только люди
+                            conf=0.05,      # Уменьшаем порог уверенности для сохранения треков
+                            iou=0.3,       # Увеличиваем IOU для лучшего сопоставления
+                            stream_buffer=True,
+                            verbose=False)
         
-        # Применяем маску к кадру
-        masked_frame = cv2.bitwise_and(frame, frame, mask=mask)
-        
-        # Запускаем детекцию и трекинг с отключенным выводом
-        results = model.track(masked_frame, persist=True, classes=[0], conf=0.2, verbose=False)
-
-        # Рисуем линию разделения
-        cv2.line(frame, (0, FRAME_HEIGHT//3), (FRAME_WIDTH, FRAME_HEIGHT//3), (0, 0, 255), 2)
-        
-        # Уменьшаем счетчики cooldown для всех треков
-        for track_id in list(tracked_ids.keys()):
-            tracked_ids[track_id]['cooldown'] = max(0, tracked_ids[track_id]['cooldown'] - 1)
-            # Удаляем треки, которые не появлялись долгое время
-            if tracked_ids[track_id]['frames_missing'] > 300:  # 2 секунды при 30 FPS
-                del tracked_ids[track_id]
-            else:
-                tracked_ids[track_id]['frames_missing'] += 1
-
-        # Рисуем зону детекции
-        zone_color = (255, 0, 0)  # Синий цвет для зоны
-        cv2.rectangle(frame, 
-                     (DETECTION_ZONE['x'], DETECTION_ZONE['y']), 
-                     (DETECTION_ZONE['x'] + DETECTION_ZONE['width'], 
-                      DETECTION_ZONE['y'] + DETECTION_ZONE['height']), 
-                     zone_color, 2)
-
         if results[0].boxes.id is not None:
             boxes = results[0].boxes.xyxy.cpu().numpy()
             track_ids = results[0].boxes.id.cpu().numpy()
+            confidences = results[0].boxes.conf.cpu().numpy()
             
-            for box, track_id in zip(boxes, track_ids):
+            for box, track_id, conf in zip(boxes, track_ids, confidences):
                 x1, y1, x2, y2 = map(int, box[:4])
                 track_id = int(track_id)
                 
-                # Пропускаем уже подсчитанные треки
-                if track_id in tracked_ids and tracked_ids[track_id]['counted']:
-                    continue
+                # Цвет зависит от уверенности детекции
+                color = (0, int(255 * conf), 0)
                 
-                # Проверяем, находится ли центр трека в зоне детекции
-                center_x = (x1 + x2) // 2
-                center_y = (y1 + y2) // 2
-                in_zone = (DETECTION_ZONE['x'] <= center_x <= DETECTION_ZONE['x'] + DETECTION_ZONE['width'] and
-                          DETECTION_ZONE['y'] <= center_y <= DETECTION_ZONE['y'] + DETECTION_ZONE['height'])
-                
-                # Инициализируем трек, если он новый
-                if track_id not in tracked_ids:
-                    tracked_ids[track_id] = {
-                        'counted': False,
-                        'in_zone': False,
-                        'cooldown': 0,
-                        'frames_missing': 0
-                    }
-                
-                # Обновляем состояние трека
-                track_info = tracked_ids[track_id]
-                track_info['frames_missing'] = 0
-                
-                if in_zone:
-                    if not track_info['in_zone'] and track_info['cooldown'] == 0:
-                        if not track_info['counted']:
-                            people_count += 1
-                            track_info['counted'] = True
-                            continue  # Прекращаем отслеживание после подсчёта
-                        track_info['cooldown'] = ZONE_COOLDOWN
-                    color = (0, 255, 0)  # Зеленый цвет для треков в зоне
-                else:
-                    color = (255, 255, 0)  # Желтый цвет для треков вне зоны
-                
-                track_info['in_zone'] = in_zone
-                
-                # Рисуем бокс и ID только для неподсчитанных треков
+                # Рисуем бокс и информацию
                 cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-                cv2.putText(frame, f"ID: {track_id}", (x1, y1 - 10),
+                cv2.putText(frame, f"ID: {track_id} ({conf:.2f})", (x1, y1 - 10),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-                
-                # Добавляем индикатор состояния подсчета
-                status = "Counted" if track_info['counted'] else "Not counted"
-                cv2.putText(frame, status, (x1, y2 + 20),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-
-        # Отображаем счетчик
-        cv2.putText(frame, f"Total unique people: {people_count}", (10, 30),
-                   cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
 
         display_width = int(FRAME_WIDTH * SCALE_FACTOR)
         display_height = int(FRAME_HEIGHT * SCALE_FACTOR)
@@ -178,13 +100,16 @@ def process_frame(frame):
 def ffmpeg_decoder():
     """
     Потоковая функция для чтения кадров, декодированных FFmpeg.
+    Каждый кадр читается из stdout и передается в process_frame.
     """
     global ffmpeg_proc
     while True:
         try:
+            # Читаем ровно один кадр (FRAME_SIZE байт)
             raw_frame = ffmpeg_proc.stdout.read(FRAME_SIZE)
             if len(raw_frame) < FRAME_SIZE:
-                continue  # Убираем sleep
+                continue
+            # Преобразуем считанные байты в изображение numpy
             frame = np.frombuffer(raw_frame, np.uint8).reshape((FRAME_HEIGHT, FRAME_WIDTH, 3)).copy()
             process_frame(frame)
         except Exception as e:
@@ -266,7 +191,7 @@ def connect_websocket():
     """
     global ws_app
     ws_url = (
-        "wss://rs2125.extcam.com/"
+        "wss://msk3120.extcam.com/"
     )
     
     ws_app = websocket.WebSocketApp(ws_url,
@@ -335,7 +260,12 @@ if __name__ == "__main__":
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"\nИспользуется устройство: {device}\n")
     
-    # Инициализируем YOLOv8
+    # Устанавливаем параметры YOLO перед инициализацией
+    torch.backends.cudnn.benchmark = True
+    if torch.cuda.is_available():
+        torch.backends.cuda.matmul.allow_tf32 = True
+    
+    # Инициализируем YOLOv8 с улучшенными параметрами
     init_model()
 
     # Запускаем FFmpeg-процесс для декодирования видеопотока
